@@ -1,0 +1,388 @@
+---
+title: "Credit risk model for forecasting loan default"
+output:
+  word_document: default
+  pdf_document: default
+date: "2024-01-06"
+---
+
+```{r}
+#importing data
+
+data <- read.csv('/home/vaasala/Desktop/submission/loan2.csv')#importing the dataframe 
+head(data)#visualizing the dataframe
+
+```
+
+```{r}
+#(part1)data cleaning
+
+#number of rows before cleaning
+nrow(data)
+
+#removing missing values
+data2 <- na.omit(data) #function removes rows with NA 
+head(data2)#visualizing the dataframe
+
+#number of rows after cleaning
+nrow(data2)
+
+#the number of rows removed during cleaning
+dif <- nrow(data)-nrow(data2)
+sprintf('the number of rows removed is %d',dif)
+
+#number of columns in data2
+ncol(data2)
+
+```
+```{r}
+#(part2)feature selection
+#scatter plot approach
+str(data2)
+#relationship between independent variables and repay_fail
+plot(data2$repay_fail,data2$loan_amnt) #loan amount vs repay fail
+plot(data2$repay_fail,data2$int_rate) #int rate vs repay fail
+plot(data2$repay_fail,data2$installment) #installment vs repay fail
+plot(data2$repay_fail,data2$annual_inc) #annual inc vs repay fail
+plot(data2$repay_fail,data2$dti) #dti vs repay fail
+plot(data2$repay_fail,data2$delinq_2yrs) #deling 2years vs repay fail
+plot(data2$repay_fail,data2$open_acc) #open acc vs repay fail
+plot(data2$repay_fail,data2$pub_rec) #pub rec vs repay fail
+plot(data2$repay_fail,data2$total_acc) #total acc vs repay fail
+plot(data2$repay_fail,data2$total_pymnt_inv) #total payment vs repay fail
+plot(data2$repay_fail,data2$total_rec_prncp) #total_rec_prncp vs repau_fail
+plot(data2$repay_fail,data2$total_rec_int) #total_rec_int vs repay_fail
+
+#since the output is binary it is not possible to use a scatter plot for feature selection
+
+```
+
+```{r}
+#(part2)feature selection
+
+######################principal componenet analysis for feature selection#########################################
+install.packages("corrr")#installing of package for creating and handling dataframes
+library('corrr')#importing the library
+
+install.packages("ggcorrplot")#package for visualization of correlation matrix
+library(ggcorrplot)
+
+
+install.packages("FactoMineR")#package used for multivariate data analsyis
+library("FactoMineR")
+
+str(data2)#the column and data types
+
+colSums(is.na(data2))#number of missing values present in dataset
+#there are no missing values
+
+#principal component analysis can only be applied to numerical data so the categorical columns must be removed.
+
+data3 <- subset(data2, select = -c(X, term, grade,emp_length,home_ownership,loan_status,purpose,revol_util,repay_fail))
+#repay_fail column also removed because it is the dependent variable
+str(data3)
+head(data3)
+
+#normalizing the data
+data3_normalized <- scale(data3)
+head(data3_normalized)
+
+#plotting of the covariance matrix
+corr_matrix <- cor(data3_normalized) #calculation of correlations for the covariance matrix
+ggcorrplot(corr_matrix) #covariance plot of the features
+
+#applying principle component analysis
+data3_pca <- princomp(corr_matrix)
+summary(data3_pca)
+
+#the first six components can accurately present 95.8 percent of the data, so we select the 1st 6 components
+install.packages("factoextra")
+library(factoextra)
+fviz_eig(data3_pca, addlabels = TRUE)#visualization of principal components
+
+# Graph of the variables
+fviz_pca_var(data3_pca, col.var = "black")
+
+head(data3)
+
+#contribution of each variable to the major principle components
+fviz_cos2(data3_pca, choice = "var", axes = 1:2)
+
+#removing the columns with the least contribution
+data4 <- subset(data3, select = -c(annual_inc,dti,int_rate,pub_rec,total_acc,open_acc,delinq_2yrs))
+head(data4)
+
+# 3 view plot of principle componenet analysis
+install.packages("gridExtra")
+library("gridExtra")
+grid.arrange(fviz_eig(data3_pca, addlabels = TRUE),
+             fviz_cos2(data3_pca, choice = "var", axes = 1:2),
+             ncol = 2)
+```
+
+```{r}
+#(part3) fitting the model(pca)
+str(data2)
+data4$repay_fail=data2["repay_fail"]
+# changing repay_fail column to be not nested
+str(data4)
+data4$repay_fail <- unlist(data4$repay_fail$repay_fail)
+
+head(data4)
+data4 <- data.frame(data4)
+str(data4)
+#splitting the data into training and testing- the caret package
+install.packages("caret")
+library("caret")
+#partitioning data frame into training and testing sets
+head(data4)
+col <- c("loan_amnt","installment","total_pymnt_inv", "total_rec_prncp", "total_rec_int", "repay_fail")#assigning values to col object for iteration
+all_indices <- NULL #assigning the all_indices vector as null object
+for (i in col) { #for loop for partitioning each column
+  train_indices <- createDataPartition(unlist(data4[i]), times=1, p=.6, list=FALSE) #partition each column 80% as training set
+  all_indices <- union(all_indices,train_indices) #combine train indices columns together in each iteration of i
+} 
+#create training set
+data4_train <- data4[all_indices , ]#selecting the rows for train indices
+
+#create testing set
+data4_test  <- data4[-all_indices, ]#selecting the rows for test indices by reducing train indices
+
+#view number of rows in each set
+data4_train <- data.frame(data4_train)
+data4_test <- data.frame(data4_test)
+
+#observation of data4_train
+head(data4_train)
+nrow(data4_train)
+str(data4_train)
+
+#observation of data4_test
+head(data4_test)
+nrow(data4_test)
+str(data4_test)
+
+#utilizing the logit link function
+model_logit <- glm(repay_fail ~ loan_amnt + installment + total_pymnt_inv + total_rec_prncp + total_rec_int, 
+                   family = binomial(link = "logit"), #linkage
+                   data = data4_train) #data
+
+#utilizing the probit link function
+model_probit <- glm(repay_fail ~ loan_amnt + installment + total_pymnt_inv + total_rec_prncp + total_rec_int,
+                    family = binomial(link = "probit"), #linkage
+                    data = data4_train) #data
+
+#utilizing the complementary log log(cloglog) link function
+model_cloglog <- glm(repay_fail ~ loan_amnt + installment + total_pymnt_inv + total_rec_prncp + total_rec_int,
+                     family = binomial(link = "cloglog"), #linkage
+                     data = data4_train) #data
+```
+```{r}
+#(part4)validation
+
+##########################################
+#holdout validation for model selection using testing dataset
+
+
+#logit
+
+
+predictions1 <- predict(model_logit, data4_test)
+
+# predicting the target variable
+print(predictions1)
+
+#omitting any missing values
+predictions1 <- na.omit(unlist(predictions1))
+data4_testvec <- na.omit(unlist(data4_test$repay_fail))
+
+#normalization of predictions1
+predictions1 <- scale(predictions1)
+print(predictions1)
+print(data4_testvec)
+# computing model performance metrics
+df1 <- data.frame( R21 = R2(predictions1, data4_testvec), #R2 error
+            RMSE1 = RMSE(predictions1, data4_testvec), #root mean square error
+            MAE1 = MAE(predictions1,data4_testvec)) #mean absolute error
+
+#probit
+
+predictions2 <- predict(model_probit, data4_test)
+
+# predicting the target variable
+print(predictions2)
+
+#omitting any missing values
+predictions2 <- na.omit(unlist(predictions2))
+data4_testvec <- na.omit(unlist(data4_test$repay_fail))
+
+#normalization of predictions2
+predictions2 <- scale(predictions2)
+print(predictions2)
+print(data4_testvec)
+# computing model performance metrics
+df2 <- data.frame( R22 = R2(predictions2, data4_testvec), #R2 error
+            RMSE2 = RMSE(predictions2, data4_testvec), #root mean square error
+            MAE2 = MAE(predictions2,data4_testvec)) #mean absolute error
+
+#cloglog
+predictions3 <- predict(model_cloglog, data4_test)
+
+# predicting the target variable
+print(predictions3)
+
+#omitting any missing values
+predictions3 <- na.omit(unlist(predictions3))
+data4_testvec <- na.omit(unlist(data4_test$repay_fail))
+
+#normalization of predictions3
+predictions3 <- scale(predictions3)
+print(predictions3)
+print(data4_testvec)
+# computing model performance metrics
+df3 <- data.frame( R23 = R2(predictions3, data4_testvec), #R2 error
+            RMSE3 = RMSE(predictions3, data4_testvec), #root mean square error
+            MAE3 = MAE(predictions3,data4_testvec)) #mean absolute error
+
+#observing results
+print(df1)
+print(df2)
+print(df3)
+
+#results
+#R22>R21>R23
+#RMSE3>RMSE1>RMSE2
+#MAE2>MAE1>MAE3
+
+#considering the 3 error metrics the model 1 seems to be the most plausible, the logistic regression model is suitable for this task
+```
+```{r}
+#cross validation for model selection
+library(caret)
+head(data4)
+#assinging the equation
+eqn <- unlist(repay_fail) ~ loan_amnt + installment + total_pymnt_inv + total_rec_prncp + total_rec_int
+#fitting model(logit)
+model_logit_crossval <- train(
+  eqn,
+  data = data4, #dataset
+  method = "glm", #model for validation
+  trControl = trainControl(method = "cv", number = 10), # 10-fold cross-validation
+  metric = "RMSE", #metric of evaluation
+  family=binomial(link = "logit"), #family of link for glm
+)
+print(model_logit_crossval)
+
+
+#fitting model(probit)
+model_probit_crossval <- train(
+  eqn,
+  data = data4, #dataset
+  method = "glm", #model for validation
+  trControl = trainControl(method = "cv", number = 10), # 10-fold cross-validation
+  metric = "RMSE", #metric of evaluation
+  family=binomial(link = "probit"), #family of link for glm
+)
+print(model_probit_crossval)
+
+
+#fitting model(cloglog)
+model_cloglog_crossval <- train(
+  eqn,
+  data = data4, #dataset
+  method = "glm", #model for validation
+  trControl = trainControl(method = "cv", number = 10), # 10-fold cross-validation
+  metric = "RMSE", #metric of evaluation
+  family=binomial(link = "cloglog"), #family of link for glm
+)
+print(model_cloglog_crossval)
+```
+```{r}
+#goodness of fit using receiver operating characteristic curve(ROC)
+
+
+library(pROC)
+
+#logit
+# Create an ROC object
+predictions1 <- na.omit(unlist(predictions1))
+data4_testvec <- na.omit(unlist(data4_test$repay_fail))
+
+print(data4_testvec)
+print(predictions1)
+roc_obj_logit <- roc(response = data4_testvec, predictor = predictions1)
+
+# AUC value
+auc_value_logit <- auc(roc_obj_logit)
+
+#ROC curve
+plot(roc_obj_logit, main = "ROC Curve - Logit", col = "blue")
+
+#AUC values
+print(auc_value_logit)
+
+
+#probit
+# Create an ROC object
+predictions2 <- na.omit(unlist(predictions2))
+data4_testvec <- na.omit(unlist(data4_test$repay_fail))
+roc_obj_probit <- roc(response = data4_testvec, predictor = predictions2)
+
+# AUC value
+auc_value_probit <- auc(roc_obj_probit)
+
+#ROC curve
+plot(roc_obj_probit, main = "ROC Curve - probit", col = "green")
+
+#AUC values
+print(auc_value_probit)
+
+#cloglog
+# Create an ROC object
+predictions3 <- na.omit(unlist(predictions3))
+data4_testvec <- na.omit(unlist(data4_test$repay_fail))
+roc_obj_cloglog <- roc(response = data4_testvec, predictor = predictions3)
+
+# AUC value
+auc_value_cloglog <- auc(roc_obj_cloglog)
+
+#ROC curve
+plot(roc_obj_cloglog, main = "ROC Curve - cloglog", col = "red")
+
+#AUC values
+print(auc_value_cloglog)
+
+
+#all curves in one plot
+plot(roc_obj_logit, col = "blue", main = "ROC Curves", lwd = 2)
+plot(roc_obj_probit, col = "green", add = TRUE, lwd = 2)
+plot(roc_obj_cloglog, col = "red", add = TRUE, lwd = 2)
+legend("bottomright", legend = c("Logit", "Probit","cloglog"), col = c("blue","green", "red"), lwd = 2)
+
+```
+
+```{r}
+#validation using AIC(akike information criterion)
+
+# Calculation of AIC
+aic_1 <- AIC(model_logit)
+aic_2 <- AIC(model_probit)
+aic_3 <- AIC(model_cloglog)
+
+# Comparing AIC values
+
+if (aic_1 < aic_2 & aic_1 < aic_3) {
+  cat("Model 1 most suitable.\n")
+} else if (aic_2 < aic_1 & aic_2 < aic_3) {
+  cat("Model 2 is most suitable.\n")
+} else {
+  cat("Model 3 is most suitable.\n")
+}
+
+#using the AIC we have determined that model 1 is the best
+
+###################################
+
+#using the 2 seperate metric we have determined and selected the model 1 to be the most suitable
+```
+
